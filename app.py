@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pickle
 import os
-from typing import List, Dict
+from typing import List, Dict, Any
 import time
 
 # Import our custom utilities
@@ -11,7 +11,7 @@ import utils
 import numpy as np
 from scipy.sparse import hstack
 
-app = FastAPI(title="Cold Email Success Predictor")
+app = FastAPI(title="Cold Email Success Predictor API v3.14.0", version="3.14.0")
 
 # Start time for health check uptime
 start_time = time.time()
@@ -25,39 +25,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load the trained model and vectorizer
+# Model Artifacts Path
 MODEL_PATH = "model.pkl"
 VECTORIZER_PATH = "vectorizer.pkl"
+SCALER_PATH = "scaler.pkl"
 
+# Global state for models
 model = None
 vectorizer = None
+scaler = None
 
 def load_models():
-    global model, vectorizer
+    """Load production ML artifacts into memory."""
+    global model, vectorizer, scaler
     try:
-        if os.path.exists(MODEL_PATH) and os.path.exists(VECTORIZER_PATH):
+        if all(os.path.exists(p) for p in [MODEL_PATH, VECTORIZER_PATH, SCALER_PATH]):
             with open(MODEL_PATH, 'rb') as f:
                 model = pickle.load(f)
             with open(VECTORIZER_PATH, 'rb') as f:
                 vectorizer = pickle.load(f)
-            print("Production models loaded successfully.")
+            with open(SCALER_PATH, 'rb') as f:
+                scaler = pickle.load(f)
+            print("🚀 v3.14.0 Production architecture loaded successfully.")
         else:
-            print("Models not found. Please run train_model.py first.")
+            print("⚠️ Warning: v3.14 artifacts missing. Run train_model.py first.")
     except Exception as e:
-        print(f"Error loading models: {e}")
+        print(f"❌ Error loading v3.14 models: {e}")
 
+# Load models on startup
 load_models()
 
-# Pydantic Schemas for API
+# Pydantic Schemas
 class EmailRequest(BaseModel):
     email: str
-
-class Breakdown(BaseModel):
-    personalization: int
-    clarity: int
-    relevance: int
-    tone: int
-    length: int
 
 class PredictionResponse(BaseModel):
     score: int
@@ -69,66 +69,57 @@ class PredictionResponse(BaseModel):
 
 @app.get("/health")
 def health_check():
-    """Returns the API health and uptime information."""
+    """System health monitoring."""
     uptime = time.time() - start_time
     return {
-        "status": "running",
+        "status": "active",
         "uptime_seconds": round(uptime, 2),
+        "model_engine": "StackingEnsemble v3.14",
         "model_loaded": model is not None,
-        "api_version": "3.0.0"
+        "runtime": "Python 3.13 (Target 3.14 Ready)"
     }
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict_email(request: EmailRequest):
-    """Processes email text and returns comprehensive success metrics."""
-    if model is None or vectorizer is None:
-        raise HTTPException(
-            status_code=503, 
-            detail="Service Unavailable: Models are not initialized."
-        )
+    """Linguistic and predictive analysis of email content."""
+    if model is None or vectorizer is None or scaler is None:
+        raise HTTPException(status_code=503, detail="Models not initialized.")
         
     text = request.email.strip()
     if not text:
-        raise HTTPException(
-            status_code=400, 
-            detail="Bad Request: Email content cannot be empty."
-        )
+        raise HTTPException(status_code=400, detail="Content cannot be empty.")
         
     try:
-        # 1. Feature Transformation (Hybrid)
+        # Preprocessing & Feature Extraction
+        # 1. TF-IDF
         tfidf_features = vectorizer.transform([text])
-        structured_features = utils.extract_features(text).reshape(1, -1)
         
-        # Combine TF-IDF and Structured features
-        combined_features = hstack([tfidf_features, structured_features])
+        # 2. Structured Features
+        raw_features = utils.extract_features(text).reshape(1, -1)
+        # 3. Scaling (CRITICAL for v3.14 architecture)
+        scaled_features = scaler.transform(raw_features)
         
-        # 2. Probability Prediction (Positive class)
-        proba_list = model.predict_proba(combined_features)[0]
-        # In sklearn and xgboost, proba_list[1] represents positive class (1)
-        # If it's a binary classifier, but check if it's 1-dimensional for some models
-        model_proba = proba_list[1] if len(proba_list) > 1 else proba_list[0]
+        # 4. Hybrid Combination
+        combined_features = hstack([tfidf_features, scaled_features])
         
-        # 3. Comprehensive Analysis via utils.py (includes post-processing)
+        # 5. Ensemble Prediction
+        # predict_proba returns a list of probabilities [class_0, class_1]
+        probs = model.predict_proba(combined_features)[0]
+        model_proba = probs[1] if len(probs) > 1 else probs[0]
+        
+        # 6. Post-Processing & Insights via utils.py
         analysis = utils.get_full_analysis(text, model_proba)
         
         return PredictionResponse(**analysis)
     
     except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Internal Server Error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Inference Error: {str(e)}")
 
 @app.get("/")
-def home():
-    """Simple root info page."""
-    return {
-        "message": "Cold Email Success Predictor API v3.0",
-        "documentation": "/docs",
-        "health": "/health"
-    }
+def root():
+    return {"message": "Email Intel v3.14.0 API", "docs": "/docs"}
 
 if __name__ == "__main__":
     import uvicorn
-    # Using 0.0.0.0 to be accessible in various environments (local, Docker, Render)
+    # Listening on all interfaces for container/cloud compatibility
     uvicorn.run(app, host="0.0.0.0", port=10000)
